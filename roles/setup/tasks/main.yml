@@ -1,0 +1,55 @@
+      - name: Wait for connection
+        ansible.builtin.wait_for_connection:
+        delay: 5
+        timeout: 120
+                
+      - name: Cleanup "{{ genwrk }}"
+        ansible.builtin.file:
+                path: "{{ genwrk }}"
+                state: absent
+
+      - name: Mkdir "{{ genwrk }}"
+        ansible.builtin.file:
+                path: "{{ genwrk }}"
+                state: directory
+                mode: 0755
+
+      - name: Create convert script
+        ansible.builtin.template:
+                dest: "{{ genwrk }}ansible_conv"
+                src: ansible_conv.template
+
+      - name: Create rev convert script
+        ansible.builtin.template:
+                dest: "{{ genwrk }}ansible_rev_conv"
+                src: ansible_revconv.template
+
+      - name: convert rexx convert script to 1047
+        ansible.builtin.shell:
+                cmd: iconv -f utf-8 -t ibm-1047 "{{ genwrk }}ansible_rev_conv" > "{{ genwrk }}ansible_rconvert"
+
+      - name: convert rexx convert script to 1047
+        ansible.builtin.shell:
+                cmd: iconv -f utf-8 -t ibm-1047 "{{ genwrk }}ansible_conv" > "{{ genwrk }}ansible_convert"
+
+      - name: make rexx convert executable
+        ansible.builtin.command:
+                cmd: chmod 755 "{{ genwrk }}ansible_rconvert"
+
+      - name: make rexx convert executable
+        ansible.builtin.command:
+                cmd: chmod 755 "{{ genwrk }}ansible_convert"
+
+      - name: Create submit job script 
+        ansible.builtin.template:
+                dest: "{{ genwrk }}ansible_submit"
+                src: ansible_submit.template
+
+      - name: convert rexx submit script to 1047
+        include_tasks: iconv.yaml
+        loop:
+                - { convpath: '{{ genwrk }}ansible_submit', cpybackpath: "{{ genwrk }}ansible_submit" }
+                       
+      - name: make rexx submit executable
+        ansible.builtin.command:
+                cmd: chmod 755 "{{ genwrk }}ansible_submit"               

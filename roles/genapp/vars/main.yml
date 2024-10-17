@@ -1,0 +1,37 @@
+# Genapp specific Variables
+zosver: '31'
+zos_user: 'ibmuser'
+zos_user_password: 'welcome0welcome0' 
+#
+#
+# This should match the CBSA port # if also installing CBSA
+# see roles/cbsa/vars
+genapp_port: 30709
+genwrk: '/tmp/genapp/'
+base_install_jcl_path: '/tmp/genapp/'
+#
+cics_sysin: 'CICSTS61.SYSIN'
+cics_spe: 'DFH\$SIP1'
+cics_sip: 'DFH$SIP1'
+cics_regid: 'CICSTS61'
+#
+#
+cics_hlq: "{{ 'CICSTS61.CICS' if zosver == '31' else 'CICSTS.V6R1M0.CICS' }}"
+cics_hlq_short: "{{ 'CICSTS61' if zosver == '31' else 'CICSTS.V6R1M0' }}"
+db2_hlq: "{{ 'DB2V13' if zosver == '31' else 'DB2.V13R1M0' }}"
+#
+#
+#
+ispf_hlq: 'ISP'
+#
+zos_proclib: 'SYS1.PROCLIB'
+#
+zosc_port: '9443'
+zosc_server: 'ZOSCSRV'
+zosconn_hlq: 'ZCONEE'
+zos_connect_serverxml_path: '/servers/defaultServer/'
+zos_connect_vers: '/v3r0'
+zos_connect_wlp: '/var/zosconnect'
+zos_connect_home: '/usr/lpp/IBM/zosconnect'
+#
+db2_ssid: 'DBD1'

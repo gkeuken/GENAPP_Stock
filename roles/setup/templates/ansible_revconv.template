@@ -1,0 +1,8 @@
+/* rexx */ 
+  parse arg infile cpyback 
+  'iconv -f ibm-1047 -t iso8859-1 'infile' > 'infile'_tmp'
+  address sh 'chtag -t -c iso8859-1 'infile'_tmp'
+  address sh 'rm -rf 'cpyback 
+  address sh 'cp 'infile'_tmp 'cpyback 
+  address sh 'rm -rf 'infile'_tmp' 
+exit rc 

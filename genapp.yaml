@@ -1,0 +1,22 @@
+---
+  - name: Configure GENAPP for Stock Dev/Test Image
+    vars:
+        environment_vars:
+          LIBPATH: "/usr/lpp/IBM/cyp/v3r11/pyz/lib:/lib:/usr/lib:/usr/lpp/IBM/zoautil/lib"
+          PATH: "/usr/lpp/IBM/cyp/v3r11/pyz/bin:/bin:/var/bin:/usr/lpp/IBM/zoautil/bin"
+          LANG: "C"
+          ANSIBLE_HOST_KEY_CHECKING: False
+          PYTHONSTDINENCODING: "cp1047"
+          _BPXK_AUTOCVT: 'ON'
+          _CEE_RUNOPTS: "FILETAG(AUTOCVT,AUTOTAG) POSIX(ON)"
+          _TAG_REDIR_ERR: "txt"
+          _TAG_REDIR_IN: "txt"
+          _TAG_REDIR_OUT: "txt"
+          _BPX_SHAREAS: "YES"
+          _BPX_SPAWN_SCRIP: "YES"
+    environment: "{{ environment_vars }}"  
+    hosts: "{{ target_host }}"
+    gather_facts: no
+    roles:
+            - setup 
+            - genapp

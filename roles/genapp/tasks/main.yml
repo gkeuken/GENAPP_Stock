@@ -1,0 +1,421 @@
+      - name: Create "{{ genwrk }}"
+        ansible.builtin.file:
+                path: "{{ genwrk }}"
+                state: directory
+                mode: 0755
+
+      - name: Push TRS Files to z/OS
+        ansible.builtin.copy:
+          src: "{{ item.src }}"
+          dest: "{{ item.dest }}"
+          owner: ibmuser
+          group: sys1
+          mode: '0755'
+        loop:
+                - { src: 'standard.genapp.trs', dest: "{{ genwrk }}standard.genapp.trs" }
+
+      - name: build db2d JCL
+        ansible.builtin.template:
+                dest: "{{ genwrk }}db2d"
+                src: db2d.template
+
+      - name: build db2e JCL
+        ansible.builtin.template:
+                dest: "{{ genwrk }}db2e"
+                src: db2e.template
+
+      - name: build cicsstr JCL
+        ansible.builtin.template:
+                dest: "{{ genwrk }}cicsstr"
+                src: cicsstr.template
+
+      - name: build cicsstp JCL
+        ansible.builtin.template:
+                dest: "{{ genwrk }}cicsstp"
+                src: cicsstp.template
+
+      - name: Check if CBSA DB2CONN exists
+        ansible.builtin.shell: opercmd -w -T 3 'f cicsts61,cemt i db2conn' | grep CBSA
+        register: cemt_result
+        ignore_errors: true
+
+      - name: Stop CICS 
+        include_tasks: submitjob.yaml
+        loop:
+                - { jobname: "{{ genwrk }}cicsstp", timeout: 300, jobcond: '(00,NE)', convert: 'y' }
+
+      - name: check enq on cics_sysin and fail if it is allocated !!
+        ansible.builtin.shell: tsocmd "alloc fi(cics1) ds('{{ cics_sysin }}') OLD" | grep 'ALREADY IN USE'
+        register: sysin_result
+        failed_when: sysin_result.rc == 0
+
+      - name: check enq on zos_proclib and fail if it is allocated !!
+        ansible.builtin.shell: tsocmd "alloc fi(cics2) ds('{{ zos_proclib }}') OLD" | grep 'ALREADY IN USE'
+        register: procl_result
+        failed_when: procl_result.rc == 0
+
+
+      - name: copy dfhsip to genwrk
+        ansible.builtin.command:
+                cmd: cp -O c=iso8859-1 "//'{{ cics_sysin }}({{ cics_sip }})'" "{{ genwrk }}dfhsip"
+
+      - name: chtag so we can grep it
+        ansible.builtin.command:
+                cmd: /bin/chtag -t -c iso8859-1 "{{ genwrk }}dfhsip"
+
+      - name: Check DFHSIP for GENALIST
+        ansible.builtin.shell: '/bin/egrep "GENALIST" {{ genwrk }}dfhsip'
+        register: gen_result
+        ignore_errors: true
+
+      - name: update SIP GRPLIST with GENALIST if it not already there
+        ansible.builtin.replace:
+           path: '{{ genwrk }}dfhsip'
+           before: '.\)'
+           regexp: '(.*GRPLIST.+)(\))'
+           replace: '\1,GENALIST)'
+           backup: no
+        when: gen_result.rc != 0
+
+      - name: update SIP DB2CONN
+        ansible.builtin.lineinfile:
+           path: '{{ genwrk }}dfhsip'
+           insertbefore: BOF
+           regexp: '.*DB2CONN=.+'
+           line: 'DB2CONN=YES,'
+           state: present
+
+      - name: update SIP NCPLDFT
+        ansible.builtin.lineinfile:
+           path: '{{ genwrk }}dfhsip'
+           insertbefore: BOF
+           regexp: '.*NCPLDFT=GENA,'
+           line: 'NCPLDFT=GENA,'
+           state: present
+
+      - name: Push zosconnect services files to zosconnect 
+        ansible.builtin.copy:
+          src: "zconserv/"
+          dest: "{{ zos_connect_wlp }}{{ zos_connect_vers }}{{ zos_connect_serverxml_path }}resources/zosconnect/services/"
+          owner: ZOSCSRV
+          group: sys1
+          mode: '0755'
+
+      - name: Push zosconnect api files to zosconnect
+        ansible.builtin.copy:
+          src: "zconapi/"
+          dest: "{{ zos_connect_wlp }}{{ zos_connect_vers }}{{ zos_connect_serverxml_path }}resources/zosconnect/apis/"
+          owner: ZOSCSRV
+          group: sys1
+          mode: '0755'
+
+      - name: copy trs file to mvs sequential
+        ansible.builtin.command:
+                cmd: cp -P "RECFM=FB,LRECL=1024,SPACE=(CYL,(5,10),RLSE)" "{{ genwrk }}{{ item.trsfile }}" "//'IBMUSER.{{ item.trsspec }}.DUMP.TRS'"
+        loop:
+                - { trsfile: 'standard.genapp.trs', trsspec: 'GENAPP' }
+
+      - name: Create restgen JCL
+        ansible.builtin.template:   
+                dest: "{{ base_install_jcl_path }}restgen"
+                src: restgen.template
+
+      - name: Submit the UNTERSE for GENAPP
+        include_tasks: submitjob.yaml 
+        loop:
+                - { jobname: "{{ base_install_jcl_path }}restgen", timeout: 300, jobcond: '(00,NE)', convert: 'y' }
+
+      - name: copy clist to genwrk 
+        ansible.builtin.command:
+                cmd: cp -O c=iso8859-1 "//'IBMUSER.CB12V51.EXEC(CUST1)'" "{{ genwrk }}cust1"
+
+      - name: copy zosconnect proc to genwrk
+        ansible.builtin.command:
+                cmd: cp -O c=iso8859-1 "//'{{ zos_proclib }}(zoscsrv)'" "{{ genwrk }}zoscsrv"
+
+      - name: Update zoscsrv proc .. cha java_home to java8
+        ansible.builtin.replace:
+                path: "{{ genwrk }}zoscsrv"
+                regexp: 'JAVA_HOME=/usr/lpp/java/java11/current_64/' 
+                replace: 'JAVA_HOME=/usr/lpp/java/java8/current_64/'
+
+      - name: copy zosconnect server.xml to genwrk
+        ansible.builtin.command:
+                cmd: cp "{{ zos_connect_wlp }}{{ zos_connect_vers }}{{ zos_connect_serverxml_path }}server.xml" "{{ genwrk }}server.xml"
+
+      - name: Update clist 
+        ansible.builtin.lineinfile:
+                path: "{{ genwrk }}cust1"
+                regexp: "{{ item.regex }}"
+                state: present
+                line: "{{ item.replne }}"
+        loop:
+                - { regex: 'PDSMEMin  =', replne: 'PDSMEMin  = "IBMUSER.CB12V51.CNTL"' } 
+                - { regex: 'CICSHLQ   =', replne: 'CICSHLQ   = "{{ cics_hlq }}"' } 
+                - { regex: 'CICMHLQ   =', replne: 'CICMHLQ   = "{{ cics_hlq_short }}.CPSM"' } 
+                - { regex: 'CSDNAME   =', replne: 'CSDNAME   = "{{ cics_regid }}.DFHCSD"' }      
+                - { regex: 'USRHLQ    =', replne: 'USRHLQ    = "IBMUSER"' }               
+                - { regex: 'COBOLHLQ  =', replne: 'COBOLHLQ  = "IGY.V6R4M0"' }           
+                - { regex: 'DB2HLQ    =', replne: 'DB2HLQ    = "{{ db2_hlq }}"' }          
+                - { regex: 'CEEHLQ    =', replne: 'CEEHLQ    = "CEE"' }                  
+                - { regex: 'DB2RUN    =', replne: 'DB2RUN    = "{{ db2_ssid }}"' }                 
+                - { regex: 'SQLID     =', replne: 'SQLID     = "IBMUSER"' }              
+                - { regex: 'DB2SSID   =', replne: 'DB2SSID   = "{{ db2_ssid }}"' }                 
+                - { regex: 'DB2DBID   =', replne: 'DB2DBID   = "GENAPP"' }        
+        register: custclist                   
+
+      - name: Convert and copyback after edits
+        when: custclist.changed
+        include_tasks: iconv.yaml
+        loop:
+                - { convpath: "{{ genwrk }}cust1", cpybackpath: "//'IBMUSER.CB12V51.EXEC(CUST1)'" }
+                - { convpath: "{{ genwrk }}zoscsrv", cpybackpath: "//'{{ zos_proclib }}(zoscsrv)'" }
+
+      - name: Build JCL to run Clist 
+        ansible.builtin.template:
+                dest: "{{ genwrk }}CUSTJCL"
+                src: ikjef.template  
+
+      - name: submit Clist JCL
+        include_tasks: submitjob.yaml
+        loop:
+                - { jobname: "{{ genwrk }}CUSTJCL", timeout: 300, jobcond: '(00,NE)', convert: 'y' }
+
+      - name: copy Install JCL to genwrk
+        ansible.builtin.command:
+                cmd: cp -O c=iso8859-1 "//'IBMUSER.CB12V51.CNTL'" "{{ genwrk }}"
+
+      - name: Update JCL
+        ansible.builtin.lineinfile:
+                path: "{{ item.mem }}"
+                regexp: "{{ item.regex }}"
+                state: present
+                line: "{{ item.replne }}"
+        loop:
+                - { mem: "{{ genwrk }}@cobol", regex: 'REGION=', replne: '//      REGION=0M' }
+                - { mem: "{{ genwrk }}@cobol", regex: '^//STEPLIB', replne: '//STEPLIB  DD DSN=IGY.V6R4M0.SIGYCOMP,DISP=SHR' }
+
+      - name: Replace plan name 
+        ansible.builtin.replace:
+                path: "{{ item.mem }}"
+                regexp: "{{ item.regexp }}"
+                replace: "{{ item.replne }}"
+        loop:
+                - { mem: "{{ genwrk }}@db2cre", regexp: 'DSNTIA10', replne: 'DSNTIA13' }        
+                - { mem: "{{ genwrk }}@db2bind", regexp: 'DSNTIA10', replne: 'DSNTIA13' }
+
+      - name: Add Block JCL to @COBOL
+        ansible.builtin.replace:
+                path: "{{ genwrk }}@cobol"
+                regexp: "// PARM='NODYNAM"
+                replace: "//*PARM='NODYNAM"
+
+      - name: Add Block JCL to @COBOL
+        ansible.builtin.blockinfile:
+                path: "{{ genwrk }}@cobol"
+                insertafter: "//.PARM='NODYNAM"
+                state: present
+                marker: "//* {mark} "
+                marker_begin: " Begin Ansible PARM Insert "
+                marker_end: " End Ansible PARM Insert"
+                block: |
+                       // PARM='NODYNAM,LIB,RENT,APOST,LIB,CICS(''SP''),SQL,SIZE(4000K),TEST(S
+                       //             OURCE)'
+
+      - name: Add Block JCL to @COBOL
+        ansible.builtin.blockinfile:
+                path: "{{ genwrk }}@cobol"
+                insertafter: "//SYSUT7."
+                state: present
+                marker: "//* {mark} "
+                marker_begin: " Begin Ansible Block Insert "
+                marker_end: " End Ansible Block Insert"
+                block: |
+                       //SYSUT8   DD UNIT=SYSDA,SPACE=(460,(350,100))
+                       //SYSUT9   DD UNIT=SYSDA,SPACE=(460,(350,100))
+                       //SYSUT10  DD UNIT=SYSDA,SPACE=(460,(350,100))
+                       //SYSUT11  DD UNIT=SYSDA,SPACE=(460,(350,100))
+                       //SYSUT12  DD UNIT=SYSDA,SPACE=(460,(350,100))
+                       //SYSUT13  DD UNIT=SYSDA,SPACE=(460,(350,100))
+                       //SYSUT14  DD UNIT=SYSDA,SPACE=(460,(350,100))
+                       //SYSUT15  DD UNIT=SYSDA,SPACE=(460,(350,100))
+                       //SYSMDECK DD UNIT=SYSDA,SPACE=(460,(350,100))
+
+      - name: Update CSD for Mirror Trans
+        ansible.builtin.blockinfile:
+                path: "{{ genwrk }}@cdef121"
+                insertafter: "......Transactions"
+                state: present
+                marker: "* {mark} "
+                marker_begin: " Begin Ansible Tran Insert "
+                marker_end: " End Ansible Tran Insert"
+                block: |
+                        DEFINE TRANSACTION(SSAP) GROUP(GENASAT)                    
+                        PROGRAM(DFHMIRS) TASKDATALOC(ANY) TASKDATAKEY(USER)
+
+      - name: Update cdef121 and change DB2CONN name
+        ansible.builtin.replace:
+                path: "{{ genwrk }}@cdef121"
+                regexp: "Define DB2Conn.+"
+                replace: "Define DB2Conn(DBD1GENA) Group(GENASAD)  DB2ID(DBD1)"
+        when: cemt_result.rc != 0
+
+      - name: Update cdef121 and remove DB2CONN because we want CBSA one
+        ansible.builtin.lineinfile:
+                path: "{{ genwrk }}@cdef121"
+                insertafter: EOF
+                state: present  
+                line: "Delete DB2Conn(DBD1GENA) Group(GENASAD)"
+        when: cemt_result.rc == 0
+
+      - name: Update cdef121 and remove DB2CONN because we want CBSA one
+        ansible.builtin.lineinfile:
+                path: "{{ genwrk }}@cdef121"
+                insertafter: EOF
+                state: present
+                line: "Delete DB2Conn(DBD1) Group(GENASAD)"
+        when: cemt_result.rc == 0          
+
+      - name: Update CSD for TCPIP Service
+        ansible.builtin.blockinfile:
+                path: "{{ genwrk }}@cdef121"
+                insertafter: EOF
+                state: present
+                marker: "* {mark} "
+                marker_begin: " Begin Ansible TCPIP Insert "
+                marker_end: " End Ansible TCPIP Insert"
+                block: |
+                        DELETE TCPIPSERVICE(ZOSEE) GROUP(BANK) 
+                        DEFINE TCPIPSERVICE(ZOSEE) GROUP(GENA)
+                         DESCRIPTION(ZOS CONNECT EE TCPIPS)
+                         PORTNUMBER(30709)
+                         PROTOCOL(IPIC)
+                         URM(DFHISAIP)
+                         TRANSACTION(CISS)
+                         SSL(NO)
+                         SOCKETCLOSE(NO)
+                         MAXPERSIST(NO)
+                         BACKLOG(00000)
+
+      - name: copy CICS Proc to genwrk for update
+        ansible.builtin.command:
+                cmd: cp -O c=iso8859-1 "//'{{ zos_proclib }}({{ cics_regid }})'" '{{ genwrk }}{{ cics_regid }}'
+
+      - name: Update CICS Proc remove any DB2 libs before insert
+        ansible.builtin.replace:
+           path: '{{ genwrk }}{{ cics_regid }}'
+           regexp: '\/\/. +DD DSN={{ db2_hlq }}.SDSNLOAD,DISP=SHR'
+           replace: '//*'
+           backup: no
+
+      - name: Update CICS Proc remove any DB2 libs before insert
+        ansible.builtin.replace:
+           path: '{{ genwrk }}{{ cics_regid }}'
+           regexp: '\/\/. +DD DSN={{ db2_hlq }}.SDSNLOD2,DISP=SHR'
+           replace: '//*'
+           backup: no
+
+      - name: Update CICS Proc
+        ansible.builtin.blockinfile:
+                path: "{{ genwrk }}{{ cics_regid }}"
+                state: present
+                insertbefore: "//DFHRPL."
+                marker: "//* {mark} "
+                marker_begin: " Begin Ansible DB2 Steplib Block Insert "
+                marker_end: " End Ansible DB2 Steplib Block Insert"
+                block: |
+                       //         DD DSN={{ db2_hlq }}.SDSNLOAD,DISP=SHR 
+                       //         DD DSN={{ db2_hlq }}.SDSNLOD2,DISP=SHR 
+                       
+      - name: Update CICS Proc
+        ansible.builtin.blockinfile:
+                path: "{{ genwrk }}{{ cics_regid }}"       
+                state: present
+                insertbefore: "//EQADPFMB."
+                marker: "//* {mark} "
+                marker_begin: " Begin Ansible GENAPP Block Insert "
+                marker_end: " End Ansible GENAPP Block Insert"
+                block: |
+                       //         DD DSN=IBMUSER.CB12V51.LOAD,DISP=SHR
+                     
+      - name: Convert and copyback after edits
+        include_tasks: iconv.yaml
+        loop:
+                - { convpath: "{{ genwrk }}{{ cics_regid }}", cpybackpath: "//'{{ zos_proclib }}({{ cics_regid }})'" }
+                - { convpath: "{{ genwrk }}@cdef121", cpybackpath: "//'IBMUSER.CB12V51.CNTL(@CDEF121)'" }
+                - { convpath: "{{ genwrk }}dfhsip", cpybackpath: "//'{{ cics_sysin }}({{ cics_spe }})'" }
+
+      - name: RACF for GENAPP
+        ansible.builtin.command:
+                cmd: "{{ item.cmd1 }}"
+        loop:  
+                - { cmd1: tsocmd 'RDEFINE FACILITY DFHDB2.AUTHTYPE.DBD1GENA UACC(READ)' }       
+                - { cmd1: tsocmd 'RDEFINE SURROGAT IBMUSER.DFHINSTL UACC(NONE)' }        
+                - { cmd1: tsocmd 'PERMIT IBMUSER.DFHINSTL CLASS(SURROGAT) ID(CICSUSER) ACCESS(READ)' }
+                - { cmd1: tsocmd 'SETROPTS RACLIST(FACILITY) REFRESH' }        
+                - { cmd1: tsocmd 'SETROPTS RACLIST(SURROGAT) REFRESH' }      
+        ignore_errors: true
+
+
+      - name: Update zosconnect server.xml
+        ansible.builtin.lineinfile:
+                path: "{{ genwrk }}server.xml"
+                insertbefore: "</server>"
+                state: present
+                line: "<zosconnect_cicsIpicConnection id='CICS1' host='localhost' port='{{ genapp_port }}'/>"
+
+      - name: Update zosconnect server.xml add feature for cics
+        ansible.builtin.lineinfile:
+                path: "{{ genwrk }}server.xml"
+                insertbefore: ".+</featureManager>"
+                state: present
+                line: " <feature>zosconnect:cicsService-1.0</feature>"
+
+      - name: copy zosconnect server.xml back to original
+        ansible.builtin.command:
+                cmd: cp "{{ genwrk }}server.xml"  "{{ zos_connect_wlp }}{{ zos_connect_vers }}{{ zos_connect_serverxml_path }}server.xml"
+
+
+      - name: submit GENAPP job stream
+        include_tasks: submitjob.yaml
+        loop:
+                - { jobname: "{{ genwrk }}@adef121", timeout: 300, jobcond: '(00,NE)', convert: 'n' }                 
+                - { jobname: "{{ genwrk }}@asmmap", timeout: 300, jobcond: '(05,LT)', convert: 'n' }                 
+                - { jobname: "{{ genwrk }}@cdef121", timeout: 300, jobcond: '(05,LT)', convert: 'n' }                 
+                - { jobname: "{{ genwrk }}@cobol", timeout: 300, jobcond: '(05,LT)', convert: 'y' }                 
+                - { jobname: "{{ genwrk }}db2d", timeout: 300, jobcond: '(00,NE)', convert: 'y' }                 
+                - { jobname: "{{ genwrk }}@db2cre", timeout: 300, jobcond: '(00,NE)', convert: 'y' }                 
+                - { jobname: "{{ genwrk }}@db2bind", timeout: 300, jobcond: '(00,NE)', convert: 'y' }
+
+      - name: Cold start CICS 
+        include_tasks: submitjob.yaml
+        loop:
+          - { jobname: "{{ genwrk }}cicsstr", timeout: 300, jobcond: '(00,NE)', convert: 'y' }
+  
+      - name: Run GENAPP Curl test
+        ansible.builtin.uri:
+          url: https://{{ hostvars[inventory_hostname]['ansible_host'] }}:{{ zosc_port }}/genapp/motorPolicy/2/1
+          validate_certs: false
+          user: "{{ zos_user }}"
+          password: "{{ zos_user_password }}"
+        register: genapp_result
+        delegate_to: localhost
+        no_log: true
+        ignore_errors: true
+        
+      - debug: msg={{ genapp_result.json }}
+        when: genapp_result.status == 200
+        
+      - debug: msg={{ genapp_result }}
+        when: genapp_result.status != 200
+              
+      - name: Check if GENAPP API succeeded
+        ansible.builtin.assert:
+          that: genapp_result.status == 200
+          fail_msg: 'GENAPP API failed'
+          success_msg: 'GENAPP Sucessfully Installed. zOS/Connect API successfully tested'
+       
+      - name: Cleanup "{{ genwrk }}"
+        ansible.builtin.file:
+                path: "{{ genwrk }}"
+                state: absent

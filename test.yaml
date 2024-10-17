@@ -1,0 +1,29 @@
+---
+  - hosts: "{{ target_host }}"
+    vars_files: roles/genapp/vars/main.yml
+    gather_facts: no
+    
+    tasks:
+
+      - name: Run GENAPP Curl test
+        ansible.builtin.uri:
+          url: https://{{ hostvars[inventory_hostname]['ansible_host'] }}:{{ zosc_port }}/genapp/motorPolicy/2/1
+          validate_certs: false
+          user: "{{ zos_user }}"
+          password: "{{ zos_user_password }}"
+        register: genapp_result
+        delegate_to: localhost
+        no_log: true
+        ignore_errors: true
+        
+      - debug: msg={{ genapp_result.json }}
+        when: genapp_result.status == 200
+        
+      - debug: msg={{ genapp_result }}
+        when: genapp_result.status != 200
+              
+      - name: Check if GENAPP API succeeded
+        ansible.builtin.assert:
+          that: genapp_result.status == 200
+          fail_msg: 'GENAPP API failed'
+          success_msg: 'GENAPP Sucessfully Installed. zOS/Connect API successfully tested'

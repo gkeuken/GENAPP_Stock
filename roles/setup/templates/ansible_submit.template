@@ -1,0 +1,48 @@
+/* rexx */
+parse arg job_path timeout job_cond convert_flag 
+if convert_flag = 'y' then 
+do 
+  address sh 
+  'iconv -f utf-8 -t ibm-1047 'job_path '> 'job_path||'new' 
+  job_path = job_path||'new' 
+end 
+jobok_path = job_path||'_ok' 
+'touch 'jobok_path 
+address syscall 
+"readfile '"job_path"' job_jcl." 
+line.1 = '//JOBOK    EXEC PGM=IKJEFT01,COND='job_cond 
+line.2 = '//SYSPROC  DD DISP=SHR,DSN=SYS1.SBPXEXEC' 
+line.3 = '//SYSTSPRT DD SYSOUT=*' 
+line.4 = '//SYSTSIN  DD DATA,DLM=$#' 
+line.5 = ' PROF MSGID WTPMSG' 
+line.6 = ' oshell echo "complete" > +' 
+line.7 =  job_path||'_ok' 
+line.8 = '$#' 
+line.0 = 8 
+last_jcl = job_jcl.0
+if substr(job_jcl.last_jcl,1,30) = "//                            " then 
+ job_jcl.0 = job_jcl.0 - 1
+last_jcl = job_jcl.0
+do rewrite_jcl = 1 to line.0 
+  last_jcl = last_jcl + 1 
+  job_jcl.last_jcl = line.rewrite_jcl 
+end 
+job_jcl.0 = last_jcl 
+say submit('job_jcl.') 
+sleep_interval = 3 
+sleep_time = 0 
+do while sleep_time < timeout
+  sleep sleep_interval
+  sleep_time = sleep_time + sleep_interval
+  address syscall
+  "readfile '"jobok_path"' jobok."
+  if jobok.1 = 'complete' then
+  do
+    say "Job completed successfully"
+    success = 'y'
+    leave
+  end
+end
+if success = 'y' then lastrc = 0
+else lastrc = 99
+exit lastrc

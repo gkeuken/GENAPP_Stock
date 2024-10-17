@@ -1,0 +1,3 @@
+      - name: submit job "{{ item.jobname }}" 
+        ansible.builtin.command:
+                cmd: '{{ base_install_jcl_path }}ansible_submit {{ item.jobname }} {{ item.timeout }} {{ item.jobcond }} {{ item.convert }}'

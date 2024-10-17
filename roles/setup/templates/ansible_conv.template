@@ -1,0 +1,24 @@
+/* rexx */
+/* Convert file from utf-8 to ibm-1047 */
+parse arg infile cpyback
+if substr(cpyback,1,2) = '//' then
+do
+  type = 'pds'
+  cpyback = substr(cpyback,3,length(cpyback)-2)
+end
+address syscall 'pipe iconv.'
+'iconv -f utf-8 -t ibm-1047 'infile' >/dev/fd' || iconv.2
+address syscall 'close 'iconv.2
+address mvs 'execio * diskr 'iconv.1' (stem s.'
+if type = 'pds' then
+do
+  address sh 'rm -rf 'infile
+  address syscall 'writefile 'infile' 755 s.'
+  address sh 'cp 'infile '"//'''cpyback'''"'
+end
+else
+do
+  address sh 'rm -rf 'cpyback
+  address syscall 'writefile 'cpyback' 755 s.'
+end
+exit rc
