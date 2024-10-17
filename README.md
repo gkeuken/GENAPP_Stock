@@ -22,7 +22,7 @@ Most of the other variables would only need changing if there are major z/OS and
 To execute:
 Enable ssh-key authentication from the host you are running the playbook to the z/OS host!
 It is expected that /etc/ansible/hosts is populated with the host to configure, for example it might contain the following:
-hostxxx ansible_host=ipaddress ansible_port=22 ansible_ssh_user=ibmuser ansible_ssh_pass=password ansible_python_interpreter=/usr/lpp/IBM/cyp/v3r11/pyz/bin/python 
+hostxxx ansible_host=ipaddress ansible_port=22 ansible_ssh_user=ibmuser ansible_python_interpreter=/usr/lpp/IBM/cyp/v3r11/pyz/bin/python 
 (ansible_ssh_pass is not used since ssh key is used for login, update python directory as required) 
 
 After cloning this Repo change directory to the base and run: 
